@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="leaflet/leaflet.css">
+<link rel="stylesheet" href="maplibre/maplibre-gl.css?v=4.7.1">
 <style>
   :root {
     --bg: #F6F4FB; --card: #FFFFFF; --ink: #111018; --muted: #5E5873; --border: #EEECF4;
@@ -60,6 +60,7 @@
   .done-badge { display: inline-flex; align-items: center; gap: 8px; background: var(--ok-soft); color: var(--ok); border-radius: 14px; padding: 8px 12px; font-weight: 700; font-size: 15px; }
   footer { color: var(--muted); font-size: 13px; text-align: center; line-height: 1.5; padding: 4px 8px; }
   .hidden { display: none !important; }
+  .maplibregl-ctrl-attrib { font-size: 11px; }
   .walker-dot { width: 22px; height: 22px; border-radius: 11px; background: var(--primary); border: 4px solid #fff; box-shadow: 0 0 0 6px rgba(59,44,201,.22); }
   .walker-dot.sos { background: var(--danger); box-shadow: 0 0 0 8px rgba(198,40,40,.25); }
   .dest-pin { width: 30px; height: 30px; border-radius: 15px 15px 15px 2px; transform: rotate(-45deg); background: var(--yellow); border: 3px solid var(--ink); }
@@ -131,7 +132,7 @@
   </footer>
 </div>
 
-<script src="leaflet/leaflet.js"></script>
+<script src="maplibre/maplibre-gl.js?v=4.7.1"></script>
 <script>
 (function () {
   // Public project address and publishable key (safe to be public; the data
@@ -163,28 +164,41 @@
     setText('pill-text', text);
   }
 
-  var map = null, walkerMarker = null, destMarker = null, trail = null, fitted = false, last = null, timer = null, failures = 0;
+  var map = null, mapReady = false, walkerEl = null, walkerMarker = null, trailCoords = [], fitted = false, last = null, timer = null, failures = 0;
 
+  function mapFailed() { var n = $('map-note'); if (n) n.classList.remove('hidden'); }
+
+  // Street map: OpenFreeMap (free, no key) drawn with MapLibre (bundled in maplibre/).
   function ensureMap(d) {
-    if (map || !window.L) return;
-    map = L.map('map', { zoomControl: false, attributionControl: true });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).on('tileerror', function () {
-      // Street map didn't load (blocked network or map server busy). The dots,
-      // times and the Google Maps button still work.
-      var n = $('map-note'); if (n) n.classList.remove('hidden');
-    }).on('tileload', function () {
-      var n = $('map-note'); if (n) n.classList.add('hidden');
-    }).addTo(map);
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-    destMarker = L.marker([d.destination_lat, d.destination_lng], {
-      icon: L.divIcon({ className: '', html: '<div class="dest-pin"></div>', iconSize: [30, 30], iconAnchor: [15, 30] }),
-      title: d.destination
-    }).addTo(map);
-    trail = L.polyline([], { color: '#3B2CC9', weight: 5, opacity: 0.55 }).addTo(map);
-    map.setView([d.destination_lat, d.destination_lng], 16);
+    if (map) return;
+    if (!window.maplibregl) return mapFailed();
+    try {
+      map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://tiles.openfreemap.org/styles/positron',
+        center: [d.destination_lng, d.destination_lat],
+        zoom: 15,
+        attributionControl: { compact: true },
+        cooperativeGestures: false
+      });
+    } catch (e) { map = null; return mapFailed(); } // e.g. no WebGL on an old phone
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    map.on('error', function () { if (!map.isStyleLoaded()) mapFailed(); });
+    map.on('load', function () {
+      mapReady = true;
+      $('map-note').classList.add('hidden');
+      map.addSource('trail', { type: 'geojson', data: trailData() });
+      map.addLayer({ id: 'trail', type: 'line', source: 'trail', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#3B2CC9', 'line-width': 5, 'line-opacity': 0.55 } });
+    });
+    var pin = document.createElement('div'); // MapLibre moves this one; the inner shape keeps its tilt
+    pin.title = d.destination;
+    pin.innerHTML = '<div class="dest-pin"></div>';
+    pin.style.paddingBottom = '6px';
+    new maplibregl.Marker({ element: pin, anchor: 'bottom' }).setLngLat([d.destination_lng, d.destination_lat]).addTo(map);
+  }
+
+  function trailData() {
+    return { type: 'Feature', geometry: { type: 'LineString', coordinates: trailCoords }, properties: {} };
   }
 
   function renderLive(d) {
@@ -212,23 +226,24 @@
       $('stale').classList.toggle('hidden', !stale);
       if (stale) $('stale').textContent = 'No update from ' + d.walker + ' for ' + ago(age).replace(' ago', '') + '. Their phone may have lost signal or turned off.';
 
-      var ll = [pos.lat, pos.lng];
+      var ll = [pos.lng, pos.lat];
       if (map) {
-        var cls = 'walker-dot' + (sos ? ' sos' : '');
         if (!walkerMarker) {
-          walkerMarker = L.marker(ll, { icon: L.divIcon({ className: '', html: '<div class="' + cls + '"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), title: d.walker, zIndexOffset: 1000 }).addTo(map);
-        } else {
-          walkerMarker.setLatLng(ll);
-          walkerMarker.setIcon(L.divIcon({ className: '', html: '<div class="' + cls + '"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }));
-        }
-        var pts = trail.getLatLngs();
-        var prev = pts[pts.length - 1];
-        if (!prev || prev.lat !== pos.lat || prev.lng !== pos.lng) trail.addLatLng(ll);
+          walkerEl = document.createElement('div');
+          walkerEl.className = 'walker-dot';
+          walkerEl.title = d.walker;
+          walkerMarker = new maplibregl.Marker({ element: walkerEl }).setLngLat(ll).addTo(map);
+        } else walkerMarker.setLngLat(ll);
+        walkerEl.classList.toggle('sos', sos); // keep MapLibre's own classes
+        var prev = trailCoords[trailCoords.length - 1];
+        if (!prev || prev[0] !== ll[0] || prev[1] !== ll[1]) trailCoords.push(ll);
+        if (mapReady && map.getSource('trail')) map.getSource('trail').setData(trailData());
         if (!fitted) {
-          map.fitBounds(L.latLngBounds([ll, [d.destination_lat, d.destination_lng]]), { padding: [48, 48], maxZoom: 17 });
+          var bounds = new maplibregl.LngLatBounds(ll, ll).extend([d.destination_lng, d.destination_lat]);
+          map.fitBounds(bounds, { padding: 56, maxZoom: 16.5, duration: 0 });
           fitted = true;
         } else if (sos) {
-          map.panTo(ll);
+          map.easeTo({ center: ll });
         }
       }
       var maps = $('btn-maps');
