@@ -47,6 +47,7 @@
   .stat .v { font-size: 18px; font-weight: 900; letter-spacing: -0.4px; line-height: 1.2; overflow-wrap: anywhere; }
   .notice { border-radius: 16px; padding: 12px 14px; font-size: 15px; line-height: 1.45; font-weight: 500; }
   .notice.warn { background: var(--yellow-soft); }
+  .notice.ok { background: var(--ok-soft); color: var(--ok); font-weight: 600; }
   .notice b { font-weight: 800; }
   .sos-box { background: var(--danger); color: #fff; border-radius: 22px; padding: 18px; display: flex; gap: 14px; align-items: center; }
   .sos-box img { width: 72px; height: 72px; flex: none; }
@@ -103,6 +104,7 @@
       <p class="sub" id="live-sub" style="margin-top:6px"></p>
     </div>
 
+    <div id="okay" class="notice ok hidden"></div>
     <div id="stale" class="notice warn hidden"></div>
     <div id="late" class="notice warn hidden"></div>
 
@@ -286,7 +288,13 @@
       $('btn-maps').classList.add('hidden');
     }
 
-    var late = !sos && d.expected_arrival_at && now > new Date(d.expected_arrival_at).getTime() + LATE_GRACE_MS;
+    // "I'm okay" tapped in the last 15 minutes.
+    var okAt = d.checked_in_at ? new Date(d.checked_in_at).getTime() : 0;
+    var okRecent = !sos && okAt && now - okAt < 15 * 60000;
+    $('okay').classList.toggle('hidden', !okRecent);
+    if (okRecent) $('okay').textContent = '✓ ' + d.walker + ' checked in: “I’m okay” at ' + clock(d.checked_in_at) + '.';
+
+    var late = !sos && !okRecent && d.expected_arrival_at && now > new Date(d.expected_arrival_at).getTime() + LATE_GRACE_MS;
     $('late').classList.toggle('hidden', !late);
     if (late) $('late').innerHTML = '<b>Running late.</b> ' + escapeHtml(d.walker) + ' expected to arrive by ' + clock(d.expected_arrival_at) + '. You might want to check in with them.';
   }
