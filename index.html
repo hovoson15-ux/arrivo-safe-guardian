@@ -37,7 +37,9 @@
   h1 { margin: 6px 4px 0; font-weight: 900; font-size: 34px; line-height: 1.08; letter-spacing: -1.2px; }
   .sub { margin: 0 4px; color: var(--muted); font-size: 16px; line-height: 1.45; }
   .card { background: var(--card); border-radius: 20px; padding: 16px; }
-  #map { height: 46vh; min-height: 260px; max-height: 420px; border-radius: 20px; overflow: hidden; background: #E9E7F2; }
+  #map { height: 46vh; min-height: 260px; max-height: 420px; border-radius: 20px; overflow: hidden; background: #F1EFF7; }
+  #map .maplibregl-canvas { opacity: 0; transition: opacity .25s; }
+  #map.ready .maplibregl-canvas { opacity: 1; }
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 0; }
   .stat { padding: 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .stat + .stat { border-left: 1px solid var(--border); }
@@ -185,6 +187,8 @@
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     map.on('error', function () { if (!map.isStyleLoaded()) mapFailed(); });
     map.on('load', function () {
+      simplifyMap();
+      $('map').classList.add('ready');
       mapReady = true;
       $('map-note').classList.add('hidden');
       map.addSource('trail', { type: 'geojson', data: trailData() });
@@ -195,6 +199,31 @@
     pin.innerHTML = '<div class="dest-pin"></div>';
     pin.style.paddingBottom = '6px';
     new maplibregl.Marker({ element: pin, anchor: 'bottom' }).setLngLat([d.destination_lng, d.destination_lat]).addTo(map);
+  }
+
+  // A calm, simple map in Arrivo Safe colors: streets, street names, water and
+  // parks only. No shops, icons, house numbers, railways or borders.
+  var KEEP_LABELS = { transportation_name: 1, place: 1, water_name: 1 };
+  var HIDE = { poi: 1, housenumber: 1, aerodrome_label: 1, mountain_peak: 1, aeroway: 1, boundary: 1, landuse: 1 };
+  function paint(id, prop, value) { try { map.setPaintProperty(id, prop, value); } catch (e) {} }
+  function simplifyMap() {
+    (map.getStyle().layers || []).forEach(function (l) {
+      var src = l['source-layer'] || '';
+      var hide = HIDE[src] || (l.type === 'symbol' && !KEEP_LABELS[src]) ||
+        (src === 'transportation' && /rail|transit|ferry|path|pier/.test(l.id));
+      if (hide) { try { map.setLayoutProperty(l.id, 'visibility', 'none'); } catch (e) {} return; }
+      if (l.type === 'background') paint(l.id, 'background-color', '#F1EFF7');
+      else if (src === 'water') { paint(l.id, 'fill-color', '#D6E4F5'); paint(l.id, 'fill-outline-color', '#D6E4F5'); }
+      else if (src === 'waterway') paint(l.id, 'line-color', '#D6E4F5');
+      else if (src === 'park' || src === 'landcover') { paint(l.id, 'fill-color', '#E3EEDF'); paint(l.id, 'fill-opacity', 0.8); }
+      else if (src === 'building') { paint(l.id, 'fill-color', '#E8E5F0'); paint(l.id, 'fill-outline-color', '#E8E5F0'); }
+      else if (src === 'transportation' && l.type === 'line') paint(l.id, 'line-color', /casing/.test(l.id) ? '#E2DEEC' : '#FFFFFF');
+      else if (l.type === 'symbol') {
+        paint(l.id, 'text-color', src === 'water_name' ? '#6F86A8' : '#6B6680');
+        paint(l.id, 'text-halo-color', '#FFFFFF');
+        paint(l.id, 'text-halo-width', 1.4);
+      }
+    });
   }
 
   function trailData() {
