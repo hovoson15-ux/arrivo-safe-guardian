@@ -104,6 +104,7 @@
     <div id="late" class="notice warn hidden"></div>
 
     <div id="map" role="img" aria-label="Map showing where they are now"></div>
+    <p id="map-note" class="sub hidden" style="font-size:14px;margin-top:-6px">The street map didn’t load. The dot still shows where they are. Tap “Open in Google Maps” for the full map.</p>
 
     <div class="card stats">
       <div class="stat"><span class="k">Expected</span><span class="v" id="s-eta">—</span></div>
@@ -170,6 +171,12 @@
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).on('tileerror', function () {
+      // Street map didn't load (blocked network or map server busy). The dots,
+      // times and the Google Maps button still work.
+      var n = $('map-note'); if (n) n.classList.remove('hidden');
+    }).on('tileload', function () {
+      var n = $('map-note'); if (n) n.classList.add('hidden');
     }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
     destMarker = L.marker([d.destination_lat, d.destination_lng], {
