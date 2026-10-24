@@ -117,6 +117,7 @@
 
     <div id="okay" class="notice ok hidden"></div>
     <div id="battery-low" class="notice warn hidden"></div>
+    <div id="offroute" class="notice warn hidden"></div>
     <div id="stale" class="notice warn hidden"></div>
     <div id="late" class="notice warn hidden"></div>
 
@@ -403,6 +404,15 @@
     if (okRecent) $('okay').textContent = '✓ ' + d.walker + ' checked in: “I’m okay” at ' + clock(d.checked_in_at) + '.';
 
     renderCheck(d);
+    // Off their way for at least 90 seconds (heading away, or a wide detour).
+    var orr = d.off_route;
+    $('offroute').classList.toggle('hidden', !(orr && orr.off));
+    if (orr && orr.off) {
+      var far = orr.away_m >= 1000 ? (orr.away_m / 1000).toFixed(1) + ' km' : Math.round(orr.away_m / 50) * 50 + ' m';
+      $('offroute').textContent = orr.heading_away
+        ? d.walker + ' seems to be heading away from ' + d.destination + ' (about ' + far + ' further than before). You can check on them below.'
+        : d.walker + ' has gone well off the direct way to ' + d.destination + '. You can check on them below.';
+    }
     var bat = pos && pos.battery_pct != null ? pos.battery_pct : null;
     $('battery-low').classList.toggle('hidden', !(bat != null && bat <= 15));
     if (bat != null && bat <= 15) $('battery-low').textContent = 'Battery low: ' + bat + '%. If ' + d.walker + '’s phone dies, their last location stays on this page.';
