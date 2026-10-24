@@ -48,6 +48,17 @@
   .notice { border-radius: 16px; padding: 12px 14px; font-size: 15px; line-height: 1.45; font-weight: 500; }
   .notice.warn { background: var(--yellow-soft); }
   .notice.ok { background: var(--ok-soft); color: var(--ok); font-weight: 600; }
+  .btn.primary { background: var(--primary); color: #fff; }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .check { display: flex; flex-direction: column; gap: 12px; }
+  .check .k { font-size: 14px; font-weight: 700; color: var(--muted); }
+  .who { display: flex; flex-wrap: wrap; gap: 8px; }
+  .who button { height: 40px; padding: 0 16px; border-radius: 20px; border: 1.5px solid var(--border); background: #fff; font: 600 15px Inter, system-ui, sans-serif; color: var(--ink); cursor: pointer; }
+  .who button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+  .check-status { font-size: 15px; line-height: 1.45; font-weight: 500; }
+  .check-status.ok { color: var(--ok); font-weight: 700; }
+  .check-status.bad { color: var(--danger); font-weight: 700; }
+  .check-status:empty { display: none; }
   .notice b { font-weight: 800; }
   .sos-box { background: var(--danger); color: #fff; border-radius: 22px; padding: 18px; display: flex; gap: 14px; align-items: center; }
   .sos-box img { width: 72px; height: 72px; flex: none; }
@@ -105,6 +116,7 @@
     </div>
 
     <div id="okay" class="notice ok hidden"></div>
+    <div id="battery-low" class="notice warn hidden"></div>
     <div id="stale" class="notice warn hidden"></div>
     <div id="late" class="notice warn hidden"></div>
 
@@ -115,6 +127,15 @@
       <div class="stat"><span class="k">Expected</span><span class="v" id="s-eta">—</span></div>
       <div class="stat"><span class="k">Updated</span><span class="v" id="s-updated">—</span></div>
       <div class="stat"><span class="k">Battery</span><span class="v" id="s-battery">—</span></div>
+    </div>
+
+    <div id="check-card" class="card check hidden">
+      <div id="who-wrap" class="hidden">
+        <div class="k">Who’s asking?</div>
+        <div id="who" class="who" role="group" aria-label="Who’s asking"></div>
+      </div>
+      <button id="btn-check" class="btn primary" type="button">Check on them</button>
+      <div id="check-status" class="check-status" aria-live="polite"></div>
     </div>
 
     <div class="btns">
@@ -232,6 +253,90 @@
     return { type: 'Feature', geometry: { type: 'LineString', coordinates: trailCoords }, properties: {} };
   }
 
+  // ---- "Check on them" ------------------------------------------------------
+  // Asks the walker's phone "Mom is checking on you"; their answer shows here.
+  var NAME_KEY = 'arrivo.guardianName';
+  var myName = null, askedAt = 0, fastUntil = 0;
+  try { myName = localStorage.getItem(NAME_KEY); } catch (e) {}
+
+  function renderWho(names) {
+    var wrap = $('who-wrap'), box = $('who');
+    if (!names || names.length < 2) {
+      wrap.classList.add('hidden');
+      if (names && names.length === 1) myName = names[0];
+      return;
+    }
+    if (myName && names.indexOf(myName) < 0) myName = null;
+    wrap.classList.remove('hidden');
+    if (box.dataset.names === names.join('|') && box.dataset.sel === (myName || '')) return;
+    box.dataset.names = names.join('|');
+    box.dataset.sel = myName || '';
+    box.textContent = '';
+    names.forEach(function (n) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = n; // names are user-entered: never as HTML
+      b.setAttribute('aria-pressed', n === myName ? 'true' : 'false');
+      b.addEventListener('click', function () {
+        myName = n;
+        try { localStorage.setItem(NAME_KEY, n); } catch (e) {}
+        renderWho(names);
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function setCheckStatus(text, kind) {
+    var el = $('check-status');
+    el.className = 'check-status' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+  }
+
+  function renderCheck(d) {
+    var card = $('check-card');
+    if (d.status !== 'active') { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    renderWho(d.guardian_names || []);
+    $('btn-check').textContent = 'Check on ' + d.walker;
+    var c = d.check;
+    if (!c) { setCheckStatus(''); return; }
+    var asked = new Date(c.asked_at).getTime(), now = Date.now();
+    var mine = asked >= askedAt - 5000 || now - asked < 10 * 60000;
+    if (!mine) { setCheckStatus(''); return; }
+    if (c.answer === 'fine') setCheckStatus('✓ ' + d.walker + ' says “I’m fine” (' + clock(c.answered_at) + ').', 'ok');
+    else if (c.answer === 'help') setCheckStatus(d.walker + ' asked for help (' + clock(c.answered_at) + '). Call them now, or call the police.', 'bad');
+    else if (now - asked < 3 * 60000) setCheckStatus((c.from ? c.from + ' asked' : 'Asked') + ' at ' + clock(c.asked_at) + '. Waiting for ' + d.walker + ' to answer…');
+    else setCheckStatus('No answer yet (asked at ' + clock(c.asked_at) + '). Their phone may be in a bag or pocket. Try calling them.');
+  }
+
+  function askCheck() {
+    var names = (last && last.guardian_names) || [];
+    if (names.length > 1 && !myName) { setCheckStatus('Tap your name first, so ' + (last ? last.walker : 'they') + ' knows who’s asking.'); return; }
+    var btn = $('btn-check');
+    btn.disabled = true;
+    fetch(SUPABASE_URL + '/rest/v1/rpc/request_check', {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token, from_name: myName })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res && res.ok) {
+        askedAt = Date.now();
+        fastUntil = Date.now() + 3 * 60000; // check for the answer more often for a while
+        setCheckStatus('Asked. Waiting for ' + (last ? last.walker : 'them') + ' to answer…');
+        load();
+      } else if (res && res.reason === 'too_soon') {
+        setCheckStatus('You asked a moment ago. You can ask again in ' + Math.max(1, Math.ceil(res.retry_in / 60)) + ' min.');
+      } else if (res && res.reason === 'too_many') {
+        setCheckStatus('That’s a lot of check-ins for one walk. Try calling them instead.');
+      } else {
+        load();
+      }
+    }).catch(function () {
+      setCheckStatus('Couldn’t send. Check your internet and try again.', 'bad');
+    }).then(function () { setTimeout(function () { btn.disabled = false; }, 1500); });
+  }
+  $('btn-check').addEventListener('click', askCheck);
+
   function renderLive(d) {
     var sos = d.status === 'sos';
     show('v-live');
@@ -294,6 +399,11 @@
     $('okay').classList.toggle('hidden', !okRecent);
     if (okRecent) $('okay').textContent = '✓ ' + d.walker + ' checked in: “I’m okay” at ' + clock(d.checked_in_at) + '.';
 
+    renderCheck(d);
+    var bat = pos && pos.battery_pct != null ? pos.battery_pct : null;
+    $('battery-low').classList.toggle('hidden', !(bat != null && bat <= 15));
+    if (bat != null && bat <= 15) $('battery-low').textContent = 'Battery low: ' + bat + '%. If ' + d.walker + '’s phone dies, their last location stays on this page.';
+
     var late = !sos && !okRecent && d.expected_arrival_at && now > new Date(d.expected_arrival_at).getTime() + LATE_GRACE_MS;
     $('late').classList.toggle('hidden', !late);
     if (late) $('late').innerHTML = '<b>Running late.</b> ' + escapeHtml(d.walker) + ' expected to arrive by ' + clock(d.expected_arrival_at) + '. You might want to check in with them.';
@@ -344,7 +454,12 @@
     });
   }
 
-  function start() { if (!timer) timer = setInterval(load, POLL_MS); }
+  var lastLoad = 0;
+  function tick() {
+    var every = Date.now() < fastUntil ? 4000 : POLL_MS;
+    if (Date.now() - lastLoad >= every) { lastLoad = Date.now(); load(); }
+  }
+  function start() { if (!timer) timer = setInterval(tick, 2000); }
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
 
   // Keep "Updated 20 s ago" fresh between checks.
