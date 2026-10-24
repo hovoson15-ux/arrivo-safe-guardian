@@ -318,7 +318,10 @@
       method: 'POST',
       headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: token, from_name: myName })
-    }).then(function (r) { return r.json(); }).then(function (res) {
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (res) {
       if (res && res.ok) {
         askedAt = Date.now();
         fastUntil = Date.now() + 3 * 60000; // check for the answer more often for a while
