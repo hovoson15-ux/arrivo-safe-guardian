@@ -140,7 +140,7 @@
     </div>
 
     <div class="btns">
-      <a id="btn-police" class="btn danger hidden" href="tel:113">Call Police</a>
+      <a id="btn-police" class="btn danger hidden" href="tel:112">Call Police</a>
       <a id="btn-maps" class="btn outline hidden" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
     </div>
   </section>
@@ -350,6 +350,11 @@
 
     $('sos').classList.toggle('hidden', !sos);
     $('btn-police').classList.toggle('hidden', !sos);
+    // Police for the walker's country (from their phone number). 112 works on
+    // almost every mobile network if it's unknown.
+    var pol = d.police && /^\d{2,4}$/.test(d.police.number) ? d.police : { number: '112', country: null };
+    $('btn-police').setAttribute('href', 'tel:' + pol.number);
+    $('btn-police').setAttribute('aria-label', pol.country ? 'Call Police in ' + pol.country : 'Call Police');
     if (sos) setText('sos-title', 'SOS from ' + d.walker + (d.sos_at ? ' at ' + clock(d.sos_at) : ''));
 
     setText('live-title', d.walker + ' is walking to ' + d.destination);
